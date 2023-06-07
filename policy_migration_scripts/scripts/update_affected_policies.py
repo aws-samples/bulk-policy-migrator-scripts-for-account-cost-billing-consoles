@@ -13,13 +13,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import boto3
 from botocore.exceptions import ClientError
 
-from policy_migration_scripts.utils.hashing import generate_policy_hash, normalize_policy
-
 # Add project root to sys path so that interpreter is able to find our package and modules
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 sys.path.append(project_root)
 
 from policy_migration_scripts.utils.constants import MAX_WORKERS, MEMBER_ACCOUNT_ROLE_NAME
+from policy_migration_scripts.utils.hashing import generate_policy_hash, normalize_policy
 from policy_migration_scripts.utils.iam import IamHelper
 from policy_migration_scripts.utils.log import get_logger
 from policy_migration_scripts.utils.model import PolicyType, ValidationException
