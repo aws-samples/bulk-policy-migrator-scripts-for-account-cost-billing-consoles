@@ -30,15 +30,7 @@ LOGGER = get_logger(__name__)
 
 
 def validate(affected_policies_data, org_accounts):
-    """
-    * Validations:
-        * File has all the required fields
-        * Group names are unique
-        * Account IDs belongs to the same org as payer and are valid 12-digit account
-        * ImpactedPolicyStatements only contain actions in scope for migration
-        * SuggestedPolicyStatementsToAppend only contain actions in scope for migration
-        * All Suggested policy statements have Sid of the format - BillingConsolePolicyMigratorxx.
-    """
+    """ Validations """
     LOGGER.info("Validating input data...")
     if not affected_policies_data:
         raise ValidationException("Input file 'affected_policies_and_suggestions.json' is empty")
@@ -112,7 +104,7 @@ def validate_suggested_policy_statements(affected_policy):
         for action in actions:
             prefix = action.split(':')[0]
             # Checking prefix instead of full action name since customers can tweak the suggestions as per their needs,
-            #   and we need to flexible enough to accommodate all cases like billing:*, billing:Get*, etc.
+            #   and we need to flexible enough to accommodate wildcards.
             if prefix not in new_actions_prefix:
                 raise ValidationException(
                     f"Invalid data: SuggestedPolicyStatementsToAppend in Group {group_name} contains action(s) not in "

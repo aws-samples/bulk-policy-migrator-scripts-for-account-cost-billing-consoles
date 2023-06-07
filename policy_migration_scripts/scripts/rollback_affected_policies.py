@@ -33,7 +33,6 @@ FAILURE = "Failure Cases"
 def main():
     args = parse_args()
     rollback_args_fast_validate(args)
-    # currently, payer_account is determined through aws credentials that are updated through ada cli.
     payer_account = get_caller_account()
     org_client = boto3.client('organizations')
     validate_if_being_run_by_payer_account(org_client, payer_account)
@@ -361,7 +360,7 @@ def is_suggested_policy_statement(statement):
 
 def clean_up_suggested_customer_managed_statements_if_found_any(policy: dict):
     # there is only default version in policy version list
-    # this function finds it and clean it up
+    # this function finds it and cleans it up
     should_update = True
     for policy_version in policy['PolicyVersionList']:
         if not policy_version['IsDefaultVersion']:  # which means it is not in use

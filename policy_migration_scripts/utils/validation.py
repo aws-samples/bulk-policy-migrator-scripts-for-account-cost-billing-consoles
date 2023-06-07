@@ -42,7 +42,7 @@ def _validate_account(account_id):
 
 
 def validate_org_accounts(input_accounts, payer_account, all_member_accounts):
-    # validate accounts passed in are linked accounts in payer's org
+    # validate accounts passed in are member accounts in payer's org
     for account in input_accounts:
         if account not in all_member_accounts:
             raise ValidationException(

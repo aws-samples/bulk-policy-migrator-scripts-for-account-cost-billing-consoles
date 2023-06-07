@@ -262,7 +262,7 @@ def get_policy_deprecated_actions(action_mapping, policy_statement):
 
     deprecated_actions = set()
     for action in actions_or_not_actions:
-        if action != '*':  # Skip handling statements with admin priviledges
+        if action != '*':  # Skip handling statements with admin privileges
             pattern = action.replace('*', '.*').replace('?', '.?')
             r = re.compile(pattern)
             for mapped_action in action_mapping.keys():
