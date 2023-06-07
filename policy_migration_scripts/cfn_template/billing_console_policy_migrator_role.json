@@ -1,0 +1,53 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "BillingConsolePolicyMigratorRoleTemplate": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": "arn:aws:iam::<management_account>:root"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Description": "IAM role in member account for bulk policy migrator scripts",
+        "Policies": [
+          {
+            "PolicyName": "BillingConsolePolicyMigratorRolePolicy",
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Action": [
+                    "iam:GetAccountAuthorizationDetails",
+                    "iam:GetPolicy",
+                    "iam:GetPolicyVersion",
+                    "iam:GetUserPolicy",
+                    "iam:GetGroupPolicy",
+                    "iam:GetRolePolicy",
+                    "iam:CreatePolicyVersion",
+                    "iam:DeletePolicyVersion",
+                    "iam:PutUserPolicy",
+                    "iam:PutGroupPolicy",
+                    "iam:PutRolePolicy",
+                    "iam:SetDefaultPolicyVersion",
+                    "iam:ListPolicyVersions"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": "*"
+                }
+              ],
+              "Version": "2012-10-17"
+            }
+          }
+        ],
+        "RoleName": "BillingConsolePolicyMigratorRole"
+      }
+    }
+  }
+}
