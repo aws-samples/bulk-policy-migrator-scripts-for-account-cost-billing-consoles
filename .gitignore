@@ -1,0 +1,10 @@
+*~
+*#
+*.swp
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+/.cache
+/.mypy_cache
