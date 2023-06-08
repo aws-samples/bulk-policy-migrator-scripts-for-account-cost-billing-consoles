@@ -23,13 +23,9 @@ These scripts provide the following benefits:
 
 ## Prerequisites
 
-1.These scripts are designed to run using Python 3. Credentials must be pre-configured using the
-AWS CLI. You can read more about how to
-pre-authenticate [here](https://boto3.amazonaws.com/v1/documentation/api/latest/guide/credentials.html)
+1. Download and install [Python 3](https://www.python.org/downloads/).
 
-
-2.Permissions needed to run the script are as follows:
-
+2. Ensure that you have an IAM principal in your payer account that has the following IAM permissions:
 ```
 "iam:GetAccountAuthorizationDetails",
 "iam:GetPolicy",
@@ -51,53 +47,84 @@ pre-authenticate [here](https://boto3.amazonaws.com/v1/documentation/api/latest/
 "organizations:DescribeOrganization",
 "sts:AssumeRole"
 ```
+These are the permissions needed to execute the script. You will be using this IAM principal to configure aws credentials
+before running the scripts.
 
-3.IAM role named `BillingConsolePolicyMigratorRole` has to be deployed in all member accounts of an AWS Organization
-for payer account to access affected policies within those accounts. The CFN template for this role is available in
-this
-repo. Please refer to user guide for instructions on how to set this up.
+## Step 1: Set up the environment
 
-## Installation Steps
+1. Clone the project to your local directory
+    ```
+    git clone https://github.com/aws-samples/bulk-policy-migrator-scripts-for-account-cost-billing-consoles.git
+    ```
 
-1.Clone the project to your local directory
+2. Navigate into the project
+    ```
+    cd bulk-policy-migrator-scripts-for-account-cost-billing-consoles
+    ```
 
+3. Setup virtualenv
+    ```
+    python3 -m venv venv
+    ```
+
+4. Activate virtualenv
+    ```
+    source venv/bin/activate
+    ```
+
+5. Install dependencies
+    ```
+    pip install -r requirements.txt
+    ```
+
+6. Navigate to directory containing the scripts
+    ```
+    cd policy_migration_scripts/scripts
+    ```
+
+7. Configure the credentials using AWS CLI. You can read more about how to do this [here](https://boto3.amazonaws.com/v1/documentation/api/latest/guide/credentials.html)
+
+## Step 2: Create the CloudFormation stack set
+
+Follow this procedure to create a CloudFormation stack set. The stack set creates an IAM role named *BillingConsolePolicyMigratorRole*
+across all member accounts of your organization. This IAM role will be assumed by the payer account during the script execution
+to access affected policies in the member accounts.
+
+**Note**:
+You only need to complete this step once from the management account (payer account).
+
+**To create the CloudFormation stack set**
+
+1. In a text editor, open the [billing_console_policy_migrator_role.json]((policy_migration_scripts/cfn_template/billing_console_policy_migrator_role.json)) template file
+   and replace each instance of *<management_account>* with the account ID of the payer account (for example, 123456789012).
+2. Save the file.
+3. Sign in to the AWS Management Console as the payer account.
+4. In the CloudFormation console, create a stack set with the template file that you updated.
+
+For more information, see [Creating a stack set on the AWS CloudFormation console](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-getting-started-create.html)
+in the AWS CloudFormation User Guide.
+
+After CloudFormation creates the stack set, each member account in your organization has *BillingConsolePolicyMigratorRole* IAM role.
+The IAM role contains the following permissions:
 ```
-git clone https://github.com/aws-samples/bulk-policy-migrator-scripts-for-account-cost-billing-consoles.git
+"iam:GetAccountAuthorizationDetails",
+"iam:GetPolicy",
+"iam:GetPolicyVersion",
+"iam:GetUserPolicy",
+"iam:GetGroupPolicy",
+"iam:GetRolePolicy",
+"iam:CreatePolicyVersion",
+"iam:DeletePolicyVersion",
+"iam:ListPolicyVersions"
+"iam:PutUserPolicy",
+"iam:PutGroupPolicy",
+"iam:PutRolePolicy",
+"iam:SetDefaultPolicyVersion"
 ```
 
-2.Navigate into the project
+## Step 3: Identify the affected policies
 
-```
-cd bulk-policy-migrator-scripts-for-account-cost-billing-consoles
-```
-
-3.Setup virtualenv
-
-```
-python3 -m venv venv
-```
-
-4.Activate virtualenv
-
-```
-source venv/bin/activate
-```
-
-5.Install dependencies
-
-```
-pip install -r requirements.txt
-```
-
-6.Navigate to directory containing the scripts
-
-```
-cd policy_migration_scripts/scripts
-```
-
-## Running the scripts
-
-### 1. Identify the affected policies
+To identify affected policies run the `identify_affected_policies.py` script
 
 Following input parameters are supported:
 
@@ -134,15 +161,31 @@ python identify_affected_policies.py –-action-mapping-config-file /path/to/act
 python identify_affected_policies.py
 ```
 
-### 2. Update the affected policies
+After you run the script, it creates two JSON files in an Affected_Policies_<*Timestamp*> folder:
+* affected_policies_and_suggestions.json - Lists affected policies along with the suggested new actions.
+* detailed_affected_policies.json - Contains the complete policy document of all affected policies that was identified
 
-The script takes as argument the absolute path of the directory created by running identify_affected_policies.py script
+## Step 4: Review the suggested changes
+
+1. In a text editor, open the *affected_policies_and_suggestions.json* file.
+2. In the AccountsScanned section, verify that the number of similar groups identified across the scanned accounts is expected.
+3. Review the suggested fine-grained actions that will be added to the affected policies.
+4. Update your file as needed and then save it.
+
+## Step 5: Update the affected policies
+
+After you review and refine the suggested replacements, run the `update_affected_policies.py` script.
+The script takes as argument the absolute path of the directory created by running *identify_affected_policies.py* script
 
 ```
 python update_affected_policies.py --affected-policies-directory /path/to/Affected_Policies_<Timestamp>
 ```
 
-### 3. Revert changes done by update script (Optional)
+## Step 6: Revert your changes (Optional)
+
+The `rollback_affected_polices.py` script reverts the changes applied to each affected policy for the specified accounts.
+The script removes all `Sid` blocks that the `update_affected_policies.py` script appended. These `Sid` blocks have
+the `BillingConsolePolicyMigrator#` format.
 
 Following input parameters are supported:
 
