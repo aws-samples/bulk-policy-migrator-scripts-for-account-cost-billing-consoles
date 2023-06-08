@@ -100,7 +100,7 @@ def identify_affected_user_inline_policies(maps, caller_account, account, action
                     policy_document = policy['PolicyDocument']
                     if not is_policy_migrated(policy_document):
                         impacted_statements = []
-                        policy_id = f"{user['UserName']}${policy['PolicyName']}"
+                        policy_id = f"{user['UserName']}${policy['PolicyName']}${account}"
                         policy_document_copy = policy_document.copy()
                         statements = (policy_document['Statement']
                                       if isinstance(policy_document['Statement'], list)
@@ -135,7 +135,7 @@ def identify_affected_group_inline_policies(maps, caller_account, account, actio
                     policy_document = policy['PolicyDocument']
                     if not is_policy_migrated(policy_document):
                         impacted_statements = []
-                        policy_id = f"{group['GroupName']}${policy['PolicyName']}"
+                        policy_id = f"{group['GroupName']}${policy['PolicyName']}${account}"
                         policy_document_copy = policy_document.copy()
                         statements = (policy_document['Statement']
                                       if isinstance(policy_document['Statement'], list)
@@ -170,7 +170,7 @@ def identify_affected_role_inline_policies(maps, caller_account, account, action
                     policy_document = policy['PolicyDocument']
                     if not is_policy_migrated(policy_document):
                         impacted_statements = []
-                        policy_id = f"{role['RoleName']}${policy['PolicyName']}"
+                        policy_id = f"{role['RoleName']}${policy['PolicyName']}${account}"
                         policy_document_copy = policy_document.copy()
                         statements = (policy_document['Statement']
                                       if isinstance(policy_document['Statement'], list)
