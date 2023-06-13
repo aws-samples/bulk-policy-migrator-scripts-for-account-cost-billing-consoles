@@ -191,18 +191,6 @@ def validate_input_directory(input_directory):
             f"Input directory {input_directory} is missing the file 'affected_policies_and_suggestions.json'")
 
 
-def get_all_org_accounts(org_client):
-    """ Returns all accounts in the organization """
-    LOGGER.info("Fetching all accounts in the organization...")
-    result = []
-    response = org_client.list_accounts()
-    result.extend(list(map(lambda x: x['Id'], response['Accounts'])))
-    while 'NextToken' in response:
-        response = org_client.list_accounts(NextToken=response['NextToken'])
-        result.extend(list(map(lambda x: x['Id'], response['Accounts'])))
-    return result
-
-
 def update_policies_and_get_error_report(sts_client, org_client, caller_account, affected_policies_group):
     """
     Update all policies in the input file with the corresponding suggestions and return all failures encountered
@@ -446,7 +434,7 @@ def main():
     with open(affected_policies_file, 'r') as fp:
         affected_policies_data = json.load(fp)
 
-    org_accounts = get_all_org_accounts(org_client)
+    org_accounts = OrgHelper.get_all_org_accounts(org_client)
 
     validate(affected_policies_data, org_accounts)
 
