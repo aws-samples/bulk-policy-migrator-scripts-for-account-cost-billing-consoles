@@ -18,7 +18,7 @@ sys.path.append(project_root)
 from policy_migration_scripts.utils.hashing import generate_policy_hash, normalize_policy
 from policy_migration_scripts.utils.iam import IamHelper
 from policy_migration_scripts.utils.log import get_logger
-from policy_migration_scripts.utils.model import PolicyType
+from policy_migration_scripts.utils.model import PolicyType, ValidationException
 from policy_migration_scripts.utils.org import OrgHelper
 from policy_migration_scripts.utils.utils import (
     get_default_old_to_new_action_map,
@@ -410,7 +410,7 @@ def main():
     LOGGER.info(f'Caller account: {caller_account}')
 
     if args.all and args.accounts:
-        raise RuntimeError('Invalid input: cannot pass in both --all and --accounts flags')
+        raise ValidationException('Invalid input: cannot pass in both --all and --accounts flags')
 
     if args.action_mapping_config_file:
         LOGGER.info(f"Using custom action mapping config file: {args.action_mapping_config_file}")
@@ -424,15 +424,18 @@ def main():
         LOGGER.info(f'Running in ORG mode for payer account: {caller_account}')
         account_pool = OrgHelper.get_all_org_accounts(org_client)
         if args.exclude_accounts:
-            [account_pool.remove(account) for account in [args.exclude_accounts]]
             LOGGER.info(f'Excluding accounts: {args.exclude_accounts}')
+            exclude_accounts = [account.strip() for account in args.exclude_accounts.split(",")]
+            for account in exclude_accounts:
+                if account in account_pool:
+                    account_pool.remove(account)
     elif args.accounts:
-        account_pool = [s.strip() for s in (args.accounts).split(',')]
+        account_pool = [s.strip() for s in args.accounts.split(',')]
         all_org_accounts = OrgHelper.get_all_org_accounts(org_client)
         validate_org_accounts(account_pool, caller_account, all_org_accounts)
         LOGGER.info(f'Running in LINKED ACCOUNT mode with accounts: {account_pool}')
         if args.exclude_accounts:
-            raise RuntimeError('Invalid input: cannot pass in both --exclude-accounts and \
+            raise ValidationException('Invalid input: cannot pass in both --exclude-accounts and \
                 --accounts flag')
     else:
         LOGGER.info(f'Running in PAYER ACCOUNT mode for payer account: {caller_account}')

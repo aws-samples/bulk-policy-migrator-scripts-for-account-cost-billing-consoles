@@ -9,12 +9,15 @@ from policy_migration_scripts.utils.constants import MAX_PAGE_ITEMS
 class OrgHelper:
     @staticmethod
     def get_all_org_accounts(org_client_):
+        """ Returns all ACTIVE accounts in the organization """
         result = []
         response = org_client_.list_accounts()
-        result.extend(list(map(lambda x: x['Id'], response['Accounts'])))
+        active_accounts = list(filter(lambda x: x['Status'] == 'ACTIVE', response['Accounts']))
+        result.extend(list(map(lambda x: x['Id'], active_accounts)))
         while 'NextToken' in response and response['NextToken']:
             response = org_client_.list_accounts(NextToken=response['NextToken'])
-            result.extend(list(map(lambda x: x['Id'], response['Accounts'])))
+            active_accounts = list(filter(lambda x: x['Status'] == 'ACTIVE', response['Accounts']))
+            result.extend(list(map(lambda x: x['Id'], active_accounts)))
         return result
 
     @staticmethod
