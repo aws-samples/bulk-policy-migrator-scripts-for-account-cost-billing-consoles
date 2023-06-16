@@ -41,9 +41,10 @@ def is_policy_migrated(policy_document):
     return False
 
 
-def is_impacted_action(action):
+def is_impacted_action(action, action_mapping):
     """
-    Check if the input action belongs to the list of actions being deprecated
+    Check if the input action belongs to the list of actions being deprecated.
+    `action_mapping` is a dictionary of old action to the corresponding list of new actions.
     """
     prefix = action.split(':')[0]
     if prefix == '*':
@@ -52,7 +53,7 @@ def is_impacted_action(action):
         return False
     pattern = action.replace('*', '.*').replace('?', '.?')
     r = re.compile(pattern)
-    for old_action in get_default_old_to_new_action_map().keys():
+    for old_action in action_mapping.keys():
         if r.match(old_action):
             return True
     return False

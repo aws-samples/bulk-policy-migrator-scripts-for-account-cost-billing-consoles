@@ -17,16 +17,25 @@ from botocore.exceptions import ClientError
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 sys.path.append(project_root)
 
-from policy_migration_scripts.utils.constants import MAX_WORKERS, MEMBER_ACCOUNT_ROLE_NAME
+from policy_migration_scripts.utils.constants import (
+    MAX_WORKERS_FOR_UPDATE_SCRIPT,
+    MEMBER_ACCOUNT_ROLE_NAME,
+)
 from policy_migration_scripts.utils.hashing import generate_policy_hash, normalize_policy
 from policy_migration_scripts.utils.iam import IamHelper
 from policy_migration_scripts.utils.log import get_logger
 from policy_migration_scripts.utils.model import PolicyType, ValidationException
 from policy_migration_scripts.utils.org import OrgHelper
-from policy_migration_scripts.utils.utils import is_impacted_action, is_policy_migrated
+from policy_migration_scripts.utils.utils import (
+    get_default_old_to_new_action_map,
+    is_impacted_action,
+    is_policy_migrated,
+)
 from policy_migration_scripts.utils.validation import validate_if_being_run_by_payer_account
 
 LOGGER = get_logger(__name__)
+
+DEFAULT_ACTION_MAPPING = get_default_old_to_new_action_map()
 
 
 def validate(affected_policies_data, org_accounts):
@@ -134,7 +143,7 @@ def contains_only_impacted_actions(actions):
     Checks if the input list contains only the actions that we are deprecating and no other unrelated IAM actions
     """
     for action in actions:
-        if not is_impacted_action(action):
+        if not is_impacted_action(action, DEFAULT_ACTION_MAPPING):
             return False
     return True
 
@@ -311,7 +320,7 @@ def is_policy_changed(current_policy_document, prior_impacted_statements):
     Additional check enforced to see if an affected policy has changed from when the Identify script was last run.
     This is mostly to avoid time-of-check to time-of-use software bug.
     """
-    normalized_current_policy = normalize_policy(current_policy_document)
+    normalized_current_policy = normalize_policy(current_policy_document, DEFAULT_ACTION_MAPPING)
     current_policy_hash = generate_policy_hash(normalized_current_policy)
     prior_policy_hash = generate_policy_hash({'Statement': prior_impacted_statements})
     return current_policy_hash != prior_policy_hash
@@ -440,7 +449,7 @@ def main():
 
     error_report = []
 
-    num_of_workers = min(len(affected_policies_data), MAX_WORKERS)
+    num_of_workers = min(len(affected_policies_data), MAX_WORKERS_FOR_UPDATE_SCRIPT)
     LOGGER.info("Number of worker threads used: %s", num_of_workers)
     with ThreadPoolExecutor(max_workers=num_of_workers) as executor:
         futures = [

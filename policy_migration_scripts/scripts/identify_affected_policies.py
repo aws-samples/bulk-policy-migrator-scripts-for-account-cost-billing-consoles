@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 
 import boto3
@@ -15,10 +16,11 @@ import boto3
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 sys.path.append(project_root)
 
+from policy_migration_scripts.utils.constants import MAX_WORKERS_FOR_IDENTIFY_SCRIPT
 from policy_migration_scripts.utils.hashing import generate_policy_hash, normalize_policy
 from policy_migration_scripts.utils.iam import IamHelper
 from policy_migration_scripts.utils.log import get_logger
-from policy_migration_scripts.utils.model import PolicyType, ValidationException
+from policy_migration_scripts.utils.model import Maps, PolicyType, ValidationException
 from policy_migration_scripts.utils.org import OrgHelper
 from policy_migration_scripts.utils.utils import (
     get_default_old_to_new_action_map,
@@ -32,27 +34,62 @@ from policy_migration_scripts.utils.validation import (
 LOGGER = get_logger(__name__)
 
 
-class Maps:
-    def __init__(self):
-        self.policy_id_to_original = {}
-        self.policy_id_to_impacted_statements = {}
-        self.policy_id_to_metadata = {}
-        self.policy_id_to_hash = {}
-        self.policy_hash_to_policy_ids: dict = {}
-        self.policy_hash_to_suggested_replacements = {}
+def identify_affected_policies_and_generate_maps(caller_account, account_pool, action_mapping):
+    LOGGER.info('Identifying affected policies...')
+    aggregate_maps = Maps()
+    num_of_workers = min(len(account_pool), MAX_WORKERS_FOR_IDENTIFY_SCRIPT)
+    LOGGER.info("Number of worker threads used: %s", num_of_workers)
+    with ThreadPoolExecutor(max_workers=num_of_workers) as executor:
+        futures = [
+            executor.submit(identify_affected_policies_and_generate_maps_for_account, caller_account, account,
+                            action_mapping)
+            for account in account_pool]
+        for future in as_completed(futures):
+            individual_maps = future.result()
+            merge_maps(aggregate_maps, individual_maps)
+    LOGGER.info('Finished Identifying affected policies')
+    return aggregate_maps
 
 
-def identify_affected_policies(maps, caller_account, account_pool, action_mapping):
-    for account in account_pool:
-        LOGGER.info(f'Running with account: {account}')
-        LOGGER.info('Identifying affected policies...')
+def identify_affected_policies_and_generate_maps_for_account(caller_account, account, action_mapping):
+    LOGGER.info(f'Running for account: {account}')
 
-        identify_affected_customer_managed_policies(maps, caller_account, account, action_mapping)
-        identify_affected_user_inline_policies(maps, caller_account, account, action_mapping)
-        identify_affected_group_inline_policies(maps, caller_account, account, action_mapping)
-        identify_affected_role_inline_policies(maps, caller_account, account, action_mapping)
-        if account == caller_account:
-            identify_affected_scps(maps, account, action_mapping)
+    maps = Maps()
+    identify_affected_customer_managed_policies(maps, caller_account, account, action_mapping)
+    identify_affected_user_inline_policies(maps, caller_account, account, action_mapping)
+    identify_affected_group_inline_policies(maps, caller_account, account, action_mapping)
+    identify_affected_role_inline_policies(maps, caller_account, account, action_mapping)
+    if account == caller_account:
+        identify_affected_scps(maps, account, action_mapping)
+
+    LOGGER.info("Finished processing account: %s", account)
+    return maps
+
+
+def merge_maps(aggregate: Maps, individual: Maps):
+    for k, v in individual.policy_hash_to_policy_ids.items():
+        if k not in aggregate.policy_hash_to_policy_ids:
+            aggregate.policy_hash_to_policy_ids[k] = []
+        aggregate.policy_hash_to_policy_ids[k].extend(v)
+
+    for k, v in individual.policy_hash_to_suggested_replacements.items():
+        if k not in aggregate.policy_hash_to_suggested_replacements:
+            aggregate.policy_hash_to_suggested_replacements[k] = []
+        aggregate.policy_hash_to_suggested_replacements[k].extend(v)
+
+    for k, v in individual.policy_id_to_hash.items():
+        aggregate.policy_id_to_hash[k] = v
+
+    for k, v in individual.policy_id_to_impacted_statements.items():
+        if k not in aggregate.policy_id_to_impacted_statements:
+            aggregate.policy_id_to_impacted_statements[k] = []
+        aggregate.policy_id_to_impacted_statements[k].extend(v)
+
+    for k, v in individual.policy_id_to_metadata.items():
+        aggregate.policy_id_to_metadata[k] = v
+
+    for k, v in individual.policy_id_to_original.items():
+        aggregate.policy_id_to_original[k] = v
 
 
 def identify_affected_customer_managed_policies(maps, caller_account, account, action_mapping):
@@ -230,7 +267,7 @@ def identify_affected_scps(maps, account, action_mapping):
 
 
 def process_affected_policy(maps, action_mapping, account, policy_id, policy_name, policy_type, policy_document, impacted_statements):
-    normalized_policy = normalize_policy(policy_document)
+    normalized_policy = normalize_policy(policy_document, action_mapping)
     maps.policy_id_to_impacted_statements[policy_id] = normalized_policy['Statement']
     policy_hash = generate_policy_hash(normalized_policy)
     maps.policy_id_to_hash[policy_id] = policy_hash
@@ -400,8 +437,6 @@ def write_report(file_path, report):
 
 
 def main():
-    maps = Maps()
-    action_mapping = {}
     args = parse_args()
     sts_client = boto3.client('sts')
     org_client = boto3.client('organizations')
@@ -441,7 +476,7 @@ def main():
         LOGGER.info(f'Running in PAYER ACCOUNT mode for payer account: {caller_account}')
         account_pool = [caller_account]
 
-    identify_affected_policies(maps, caller_account, account_pool, action_mapping)
+    maps = identify_affected_policies_and_generate_maps(caller_account, account_pool, action_mapping)
 
     policy_groups_report = generate_policy_groups_report(maps, account_pool)
     detailed_policy_report = generate_detailed_policy_report(maps)
