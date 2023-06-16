@@ -6,7 +6,7 @@ import json
 from policy_migration_scripts.utils.utils import is_impacted_action
 
 
-def normalize_policy(policy):
+def normalize_policy(policy, action_mapping):
     """
     Reformat policy dictionary to conform to common structure.
     Omits Version and ID policy elements.
@@ -16,11 +16,11 @@ def normalize_policy(policy):
         statements = (policy['Statement']
                       if isinstance(policy['Statement'], list)
                       else [policy['Statement']])
-        normalized_policy['Statement'] = normalize_statements(statements)
+        normalized_policy['Statement'] = normalize_statements(statements, action_mapping)
     return normalized_policy
 
 
-def normalize_statements(statements):
+def normalize_statements(statements, action_mapping):
     normalized_statements = []
     statements.sort(key=sid_comparator)  # sort statements by Sid
     for statement in statements:
@@ -30,13 +30,14 @@ def normalize_statements(statements):
         """
         actions_or_not_actions = []
         if 'Action' in statement:
-            actions_or_not_actions = list(filter(is_impacted_action,  # filter impacted actions
+            # filter impacted actions
+            actions_or_not_actions = list(filter(lambda action: is_impacted_action(action, action_mapping),
                                                  (statement['Action']
                                                   if isinstance(statement['Action'], list)
                                                   else [statement['Action']])
                                                  ))
         elif 'NotAction' in statement:
-            actions_or_not_actions = list(filter(is_impacted_action,
+            actions_or_not_actions = list(filter(lambda action: is_impacted_action(action, action_mapping),
                                                  (statement['NotAction']
                                                   if isinstance(statement['NotAction'], list)
                                                   else [statement['NotAction']])
@@ -70,11 +71,11 @@ def normalize_statements(statements):
 
 
 def generate_policy_hash(policy_json):
-    '''
+    """
     Generate policy hash based on normalized json formatting.
     Some policies may have identical statements/resources that are ordered differently,
     so policy is converted to a sorted string to handle such cases.
-    '''
+    """
     normalized_json_str = json.dumps(policy_json)
     normalized_json_str_sorted = ''.join(sorted(normalized_json_str))
     policy_hash = hash(normalized_json_str_sorted)

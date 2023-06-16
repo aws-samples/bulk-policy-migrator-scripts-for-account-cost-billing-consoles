@@ -26,3 +26,32 @@ class ValidationException(Exception):
     Thrown when validations fail
     """
     pass
+
+
+class Maps:
+    """ A collection of maps used in identify script """
+
+    def __init__(self):
+        self.policy_id_to_original = {}
+        self.policy_id_to_impacted_statements = {}
+        self.policy_id_to_metadata = {}
+        self.policy_id_to_hash = {}
+        self.policy_hash_to_policy_ids: dict = {}
+        self.policy_hash_to_suggested_replacements = {}
+
+    def __eq__(self, other):
+        if not isinstance(other, Maps):
+            return False
+        if self.policy_id_to_original != other.policy_id_to_original:
+            return False
+        if self.policy_id_to_impacted_statements != other.policy_id_to_impacted_statements:
+            return False
+        if self.policy_id_to_metadata != other.policy_id_to_metadata:
+            return False
+        if self.policy_id_to_hash != other.policy_id_to_hash:
+            return False
+        if self.policy_hash_to_policy_ids != other.policy_hash_to_policy_ids:
+            return False
+        if self.policy_hash_to_suggested_replacements != other.policy_hash_to_suggested_replacements:
+            return False
+        return True
