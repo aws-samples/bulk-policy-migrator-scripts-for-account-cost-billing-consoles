@@ -95,7 +95,7 @@ You only need to complete this step once from the management account (payer acco
 
 **To create the CloudFormation stack set**
 
-1. In a text editor, open the [billing_console_policy_migrator_role.json]((policy_migration_scripts/cfn_template/billing_console_policy_migrator_role.json)) template file
+1. In a text editor, open the [billing_console_policy_migrator_role.json](policy_migration_scripts/cfn_template/billing_console_policy_migrator_role.json) template file
    and replace each instance of *<management_account>* with the account ID of the payer account (for example, 123456789012).
 2. Save the file.
 3. Sign in to the AWS Management Console as the payer account.
