@@ -140,6 +140,13 @@ python identify_affected_policies.py --all
 python identify_affected_policies.py --accounts 111122223333,444455556666,777788889999
 ```
 
+* --accounts-file – Absolute path to the CSV file containing a subset of member accounts in your organization that needs
+  to be scanned. The CSV file should have no headers and contain 12 digit AWS Account IDs in the first column of the file.
+
+```
+python identify_affected_policies.py --accounts-file /path/to/accounts_file.csv
+```
+
 * --exclude-accounts – Excludes specific member accounts in your organization. Can only be used with --all
 
 ```
@@ -199,6 +206,13 @@ python rollback_affected_policies.py --all
 
 ```
 python rollback_affected_policies.py --accounts 111122223333,444455556666,777788889999
+```
+
+* --accounts-file – Absolute path to the CSV file containing a subset of member accounts in your organization that needs
+  to be scanned. The CSV file should have no headers and contain 12 digit AWS Account IDs in the first column of the file.
+
+```
+python identify_affected_policies.py --accounts-file /path/to/accounts_file.csv
 ```
 
 * --exclude-accounts – Applies to all accounts in your organization excluding specific member accounts.
