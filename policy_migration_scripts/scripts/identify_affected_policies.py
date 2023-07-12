@@ -25,6 +25,7 @@ from policy_migration_scripts.utils.org import OrgHelper
 from policy_migration_scripts.utils.utils import (
     get_default_old_to_new_action_map,
     is_policy_migrated,
+    read_accounts_from_file,
 )
 from policy_migration_scripts.utils.validation import (
     validate_if_being_run_by_payer_account,
@@ -444,9 +445,6 @@ def main():
     validate_if_being_run_by_payer_account(org_client, caller_account)
     LOGGER.info(f'Caller account: {caller_account}')
 
-    if args.all and args.accounts:
-        raise ValidationException('Invalid input: cannot pass in both --all and --accounts flags')
-
     if args.action_mapping_config_file:
         LOGGER.info(f"Using custom action mapping config file: {args.action_mapping_config_file}")
         with open(args.action_mapping_config_file) as fp:
@@ -465,13 +463,19 @@ def main():
                 if account in account_pool:
                     account_pool.remove(account)
     elif args.accounts:
+        if args.exclude_accounts:
+            raise ValidationException('Invalid input: cannot use --exclude-accounts with --accounts argument')
         account_pool = [s.strip() for s in args.accounts.split(',')]
         all_org_accounts = OrgHelper.get_all_org_accounts(org_client)
         validate_org_accounts(account_pool, caller_account, all_org_accounts)
         LOGGER.info(f'Running in LINKED ACCOUNT mode with accounts: {account_pool}')
+    elif args.accounts_file:
         if args.exclude_accounts:
-            raise ValidationException('Invalid input: cannot pass in both --exclude-accounts and \
-                --accounts flag')
+            raise ValidationException('Invalid input: cannot use --exclude-accounts with --accounts-file argument')
+        account_pool = read_accounts_from_file(args.accounts_file)
+        all_org_accounts = OrgHelper.get_all_org_accounts(org_client)
+        validate_org_accounts(account_pool, caller_account, all_org_accounts)
+        LOGGER.info(f'Running in LINKED ACCOUNT mode with accounts: {account_pool}')
     else:
         LOGGER.info(f'Running in PAYER ACCOUNT mode for payer account: {caller_account}')
         account_pool = [caller_account]
@@ -508,12 +512,12 @@ def parse_args():
         type=str,
         help='Absolute path to the mapping action configuration file (mapping of old to new actions)'
     )
-    arg_parser.add_argument(
-        '-a', '--accounts', help='comma separated list of up to 10 AWS account IDs', type=str
-    )
-    arg_parser.add_argument(
-        '--all', help="runs script for the entire AWS Organization", action='store_true'
-    )
+
+    group = arg_parser.add_mutually_exclusive_group()
+    group.add_argument('--accounts', help='comma separated list of AWS account IDs', type=str)
+    group.add_argument('--accounts-file', help='Absolute path of the CSV file containing AWS account IDs', type=str)
+    group.add_argument('--all', help="runs script for the entire AWS Organization", action='store_true')
+
     arg_parser.add_argument(
         '--exclude-accounts',
         help='comma separated list of AWS account IDs to be excluded, only applies when --all flag \

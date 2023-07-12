@@ -1,11 +1,13 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
-
+import csv
 import json
 import os
 import re
 
+from policy_migration_scripts.utils.constants import ACCOUNT_ID_LENGTH
 from policy_migration_scripts.utils.log import get_logger
+from policy_migration_scripts.utils.model import ValidationException
 
 LOGGER = get_logger(__name__)
 
@@ -57,3 +59,32 @@ def is_impacted_action(action, action_mapping):
         if r.match(old_action):
             return True
     return False
+
+
+def is_valid_account_id(account_id):
+    return account_id.isnumeric() and len(account_id) == ACCOUNT_ID_LENGTH
+
+
+def read_accounts_from_file(file_path):
+    """
+    Read CSV file containing AWS Account IDs and return the list of accounts
+    """
+    try:
+        accounts = []
+        LOGGER.info(f"Reading accounts from file: {file_path}")
+        with open(file_path, 'r') as fp:
+            rows = csv.reader(fp)
+            for row in rows:
+                # Skip empty rows
+                if not ''.join(row).strip():
+                    continue
+                account_id = row[0]
+                if is_valid_account_id(account_id):
+                    accounts.append(account_id)
+                else:
+                    raise ValidationException(
+                        f"Invalid data in file {file_path}.\nThe file should contain only 12 digit AWS Account IDs")
+        return accounts
+    except Exception as err:
+        LOGGER.error(f"Failed when reading accounts from file: {file_path}")
+        raise err
