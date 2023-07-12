@@ -17,6 +17,7 @@ from policy_migration_scripts.utils.iam import IamHelper
 from policy_migration_scripts.utils.log import get_logger
 from policy_migration_scripts.utils.model import PolicyType
 from policy_migration_scripts.utils.org import OrgHelper
+from policy_migration_scripts.utils.utils import read_accounts_from_file
 from policy_migration_scripts.utils.validation import (
     rollback_args_deep_validate,
     rollback_args_fast_validate,
@@ -89,12 +90,14 @@ def write_summary_report(summary_report):
 
 def parse_args():
     arg_parser = argparse.ArgumentParser()
-    arg_parser.add_argument(
+
+    group = arg_parser.add_mutually_exclusive_group()
+    group.add_argument(
         "--all",
         action="store_true",
         help="The script runs for the entire AWS Organization"
     )
-    arg_parser.add_argument(
+    group.add_argument(
         "--accounts",
         dest="accounts",
         required=False,
@@ -102,6 +105,13 @@ def parse_args():
         default=None,
         help="Comma separated list of AWS account IDs, The script runs only for these accounts"
     )
+    group.add_argument(
+        '--accounts-file',
+        dest='accounts_file',
+        help='Absolute path of the CSV file containing AWS account IDs',
+        type=str
+    )
+
     arg_parser.add_argument(
         "--exclude-accounts",
         dest="excluded_accounts",
@@ -116,12 +126,21 @@ def parse_args():
     args = arg_parser.parse_args()
     parsed_args = {
         "include_all": True if args.all else False,
-        "accounts": [account.strip() for account in args.accounts.split(",")] if args.accounts else [],
+        "accounts": _get_accounts_from_args(args),
         "excluded_accounts":
             [account.strip() for account in args.excluded_accounts.split(",")] if args.excluded_accounts else [],
     }
     LOGGER.info(parsed_args)
     return parsed_args
+
+
+def _get_accounts_from_args(args):
+    if args.accounts:
+        return [account.strip() for account in args.accounts.split(",")]
+    elif args.accounts_file:
+        return read_accounts_from_file(args.accounts_file)
+    else:
+        return []
 
 
 def get_accounts_in_rollback_scope(all_member_accounts, args, payer_account):

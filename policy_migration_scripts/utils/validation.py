@@ -3,9 +3,9 @@
 
 from botocore.exceptions import ClientError
 
-from policy_migration_scripts.utils.constants import ACCOUNT_ID_LENGTH
 from policy_migration_scripts.utils.log import get_logger
 from policy_migration_scripts.utils.model import ValidationException
+from policy_migration_scripts.utils.utils import is_valid_account_id
 
 LOGGER = get_logger(__name__)
 
@@ -30,10 +30,6 @@ def rollback_args_deep_validate(args_, payer_account_, all_member_accounts_):
         validate_org_accounts(args_["accounts"], payer_account_, all_member_accounts_)
     if args_["excluded_accounts"]:
         validate_org_accounts(args_["excluded_accounts"], payer_account_, all_member_accounts_)
-
-
-def is_valid_account_id(account_id):
-    return account_id.isnumeric() and len(account_id) == ACCOUNT_ID_LENGTH
 
 
 def _validate_account(account_id):
