@@ -75,16 +75,13 @@ def merge_maps(aggregate: Maps, individual: Maps):
 
     for k, v in individual.policy_hash_to_suggested_replacements.items():
         if k not in aggregate.policy_hash_to_suggested_replacements:
-            aggregate.policy_hash_to_suggested_replacements[k] = []
-        aggregate.policy_hash_to_suggested_replacements[k].extend(v)
+            aggregate.policy_hash_to_suggested_replacements[k] = v
 
     for k, v in individual.policy_id_to_hash.items():
         aggregate.policy_id_to_hash[k] = v
 
     for k, v in individual.policy_id_to_impacted_statements.items():
-        if k not in aggregate.policy_id_to_impacted_statements:
-            aggregate.policy_id_to_impacted_statements[k] = []
-        aggregate.policy_id_to_impacted_statements[k].extend(v)
+        aggregate.policy_id_to_impacted_statements[k] = v
 
     for k, v in individual.policy_id_to_metadata.items():
         aggregate.policy_id_to_metadata[k] = v
@@ -267,7 +264,8 @@ def identify_affected_scps(maps, account, action_mapping):
                     )
 
 
-def process_affected_policy(maps, action_mapping, account, policy_id, policy_name, policy_type, policy_document, impacted_statements):
+def process_affected_policy(maps, action_mapping, account, policy_id, policy_name, policy_type, policy_document,
+                            impacted_statements):
     normalized_policy = normalize_policy(policy_document, action_mapping)
     maps.policy_id_to_impacted_statements[policy_id] = normalized_policy['Statement']
     policy_hash = generate_policy_hash(normalized_policy)
@@ -283,8 +281,8 @@ def process_affected_policy(maps, action_mapping, account, policy_id, policy_nam
         'PolicyType': policy_type,
         'PolicyName': policy_name,
     }
-    maps.policy_hash_to_suggested_replacements[policy_hash] = (
-        generate_suggested_policy_statement_replacements(action_mapping, impacted_statements))
+    maps.policy_hash_to_suggested_replacements[policy_hash] = generate_suggested_policy_statement_replacements(
+        action_mapping, impacted_statements)
 
 
 def get_policy_deprecated_actions(action_mapping, policy_statement):
@@ -514,7 +512,7 @@ def parse_args():
     )
 
     group = arg_parser.add_mutually_exclusive_group()
-    group.add_argument('--accounts', help='comma separated list of AWS account IDs', type=str)
+    group.add_argument('-a', '--accounts', help='comma separated list of AWS account IDs', type=str)
     group.add_argument('--accounts-file', help='Absolute path of the CSV file containing AWS account IDs', type=str)
     group.add_argument('--all', help="runs script for the entire AWS Organization", action='store_true')
 
