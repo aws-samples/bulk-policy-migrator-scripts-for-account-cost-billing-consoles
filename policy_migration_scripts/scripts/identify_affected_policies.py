@@ -24,6 +24,7 @@ from policy_migration_scripts.utils.model import Maps, PolicyType, ValidationExc
 from policy_migration_scripts.utils.org import OrgHelper
 from policy_migration_scripts.utils.utils import (
     get_default_old_to_new_action_map,
+    is_china_region,
     is_policy_migrated,
     read_accounts_from_file,
 )
@@ -35,7 +36,7 @@ from policy_migration_scripts.utils.validation import (
 LOGGER = get_logger(__name__)
 
 
-def identify_affected_policies_and_generate_maps(caller_account, account_pool, action_mapping):
+def identify_affected_policies_and_generate_maps(caller_account, account_pool, action_mapping, is_china):
     LOGGER.info('Identifying affected policies...')
     aggregate_maps = Maps()
     num_of_workers = min(len(account_pool), MAX_WORKERS_FOR_IDENTIFY_SCRIPT)
@@ -43,7 +44,7 @@ def identify_affected_policies_and_generate_maps(caller_account, account_pool, a
     with ThreadPoolExecutor(max_workers=num_of_workers) as executor:
         futures = [
             executor.submit(identify_affected_policies_and_generate_maps_for_account, caller_account, account,
-                            action_mapping)
+                            action_mapping, is_china)
             for account in account_pool]
         for future in as_completed(futures):
             individual_maps = future.result()
@@ -52,7 +53,7 @@ def identify_affected_policies_and_generate_maps(caller_account, account_pool, a
     return aggregate_maps
 
 
-def identify_affected_policies_and_generate_maps_for_account(caller_account, account, action_mapping):
+def identify_affected_policies_and_generate_maps_for_account(caller_account, account, action_mapping, is_china):
     LOGGER.info(f'Running for account: {account}')
 
     maps = Maps()
@@ -60,7 +61,7 @@ def identify_affected_policies_and_generate_maps_for_account(caller_account, acc
     identify_affected_user_inline_policies(maps, caller_account, account, action_mapping)
     identify_affected_group_inline_policies(maps, caller_account, account, action_mapping)
     identify_affected_role_inline_policies(maps, caller_account, account, action_mapping)
-    if account == caller_account:
+    if account == caller_account and not is_china:
         identify_affected_scps(maps, account, action_mapping)
 
     LOGGER.info("Finished processing account: %s", account)
@@ -439,7 +440,9 @@ def main():
     args = parse_args()
     sts_client = boto3.client('sts')
     org_client = boto3.client('organizations')
+    LOGGER.info("Running with boto client region = %s", sts_client.meta.region_name)
     caller_account = sts_client.get_caller_identity()['Account']
+    is_china = is_china_region(sts_client)
     validate_if_being_run_by_payer_account(org_client, caller_account)
     LOGGER.info(f'Caller account: {caller_account}')
 
@@ -449,7 +452,7 @@ def main():
             action_mapping = json.load(fp)
     else:
         LOGGER.info("Using default action mapping config file")
-        action_mapping = get_default_old_to_new_action_map()
+        action_mapping = get_default_old_to_new_action_map(sts_client.meta.partition)
 
     if args.all:
         LOGGER.info(f'Running in ORG mode for payer account: {caller_account}')
@@ -478,7 +481,7 @@ def main():
         LOGGER.info(f'Running in PAYER ACCOUNT mode for payer account: {caller_account}')
         account_pool = [caller_account]
 
-    maps = identify_affected_policies_and_generate_maps(caller_account, account_pool, action_mapping)
+    maps = identify_affected_policies_and_generate_maps(caller_account, account_pool, action_mapping, is_china)
 
     policy_groups_report = generate_policy_groups_report(maps, account_pool)
     detailed_policy_report = generate_detailed_policy_report(maps)

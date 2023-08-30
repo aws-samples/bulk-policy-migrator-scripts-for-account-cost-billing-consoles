@@ -17,7 +17,7 @@ from policy_migration_scripts.utils.iam import IamHelper
 from policy_migration_scripts.utils.log import get_logger
 from policy_migration_scripts.utils.model import PolicyType
 from policy_migration_scripts.utils.org import OrgHelper
-from policy_migration_scripts.utils.utils import read_accounts_from_file
+from policy_migration_scripts.utils.utils import is_china_region, read_accounts_from_file
 from policy_migration_scripts.utils.validation import (
     rollback_args_deep_validate,
     rollback_args_fast_validate,
@@ -34,8 +34,11 @@ FAILURE = "Failure Cases"
 def main():
     args = parse_args()
     rollback_args_fast_validate(args)
-    payer_account = get_caller_account()
+    sts_client = boto3.client('sts')
     org_client = boto3.client('organizations')
+    LOGGER.info("Running with boto client region = %s", sts_client.meta.region_name)
+    payer_account = sts_client.get_caller_identity()['Account']
+    is_china = is_china_region(sts_client)
     validate_if_being_run_by_payer_account(org_client, payer_account)
     # get accounts according to command line arguments
     all_member_accounts = OrgHelper.get_all_org_accounts(org_client)
@@ -44,7 +47,7 @@ def main():
     main_summary_report = init_summary_report()
     try:
         for member_account in member_accounts:
-            do_rollback(member_account, payer_account, org_client, main_summary_report)
+            do_rollback(member_account, payer_account, org_client, main_summary_report, is_china)
         write_summary_report(main_summary_report)
     except Exception as e:
         LOGGER.error("The rolling back process was interrupted by an expected error. "
@@ -52,9 +55,9 @@ def main():
         raise e
 
 
-def do_rollback(member_account, payer_account, org_client, main_summary_report):
+def do_rollback(member_account, payer_account, org_client, main_summary_report, is_china):
     iam_client_for_member_account = IamHelper.get_iam_client(member_account, payer_account)
-    if member_account == payer_account:
+    if member_account == payer_account and not is_china:
         summary_report = rollback_scp_policies(org_client, member_account)
         merge_report(main_summary_report, summary_report)
     merge_report(main_summary_report,
@@ -164,10 +167,6 @@ def get_accounts_in_rollback_scope(all_member_accounts, args, payer_account):
 
 def filter_member_accounts(excluded_accounts, all_accounts):
     return [account for account in all_accounts if account not in excluded_accounts]
-
-
-def get_caller_account() -> str:
-    return boto3.client('sts').get_caller_identity()['Account']
 
 
 def rollback_customer_managed_policies(iam_client_, account_id):

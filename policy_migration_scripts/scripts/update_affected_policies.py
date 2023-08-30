@@ -35,10 +35,8 @@ from policy_migration_scripts.utils.validation import validate_if_being_run_by_p
 
 LOGGER = get_logger(__name__)
 
-DEFAULT_ACTION_MAPPING = get_default_old_to_new_action_map()
 
-
-def validate(affected_policies_data, org_accounts):
+def validate(affected_policies_data, org_accounts, default_action_mapping):
     """ Validations """
     LOGGER.info("Validating input data...")
     if not affected_policies_data:
@@ -51,7 +49,7 @@ def validate(affected_policies_data, org_accounts):
         else:
             validate_group_name(affected_policy, group_names)
             validate_impacted_policies(affected_policy, org_accounts)
-            validate_impacted_policy_statements(affected_policy)
+            validate_impacted_policy_statements(affected_policy, default_action_mapping)
             validate_suggested_policy_statements(affected_policy)
 
     LOGGER.info("Finished validating input data")
@@ -120,7 +118,7 @@ def validate_suggested_policy_statements(affected_policy):
                     f"scope of this migration")
 
 
-def validate_impacted_policy_statements(affected_policy):
+def validate_impacted_policy_statements(affected_policy, default_action_mapping):
     """ Validate 'ImpactedPolicyStatements' section of the group """
     group_name = affected_policy['GroupName']
     impacted_statements = affected_policy.get('ImpactedPolicyStatements')
@@ -132,18 +130,18 @@ def validate_impacted_policy_statements(affected_policy):
         if not actions:
             raise ValidationException(
                 f"Invalid data: ImpactedPolicyStatements in Group {group_name} has empty action list")
-        if not contains_only_impacted_actions(actions):
+        if not contains_only_impacted_actions(actions, default_action_mapping):
             raise ValidationException(
                 f"Invalid data: ImpactedPolicyStatements in Group {group_name} should only contain actions that are "
                 f"being deprecated")
 
 
-def contains_only_impacted_actions(actions):
+def contains_only_impacted_actions(actions, default_action_mapping):
     """
     Checks if the input list contains only the actions that we are deprecating and no other unrelated IAM actions
     """
     for action in actions:
-        if not is_impacted_action(action, DEFAULT_ACTION_MAPPING):
+        if not is_impacted_action(action, default_action_mapping):
             return False
     return True
 
@@ -200,7 +198,8 @@ def validate_input_directory(input_directory):
             f"Input directory {input_directory} is missing the file 'affected_policies_and_suggestions.json'")
 
 
-def update_policies_and_get_error_report(sts_client, org_client, caller_account, affected_policies_group):
+def update_policies_and_get_error_report(sts_client, org_client, caller_account, affected_policies_group,
+                                         default_action_mapping):
     """
     Update all policies in the input file with the corresponding suggestions and return all failures encountered
     during this process
@@ -223,8 +222,9 @@ def update_policies_and_get_error_report(sts_client, org_client, caller_account,
             if account == caller_account:
                 iam_client = boto3.client('iam')
             else:
+                partition = sts_client.meta.partition
                 assumed_role_object = sts_client.assume_role(
-                    RoleArn=f'arn:aws:iam::{account}:role/{MEMBER_ACCOUNT_ROLE_NAME}',
+                    RoleArn=f'arn:{partition}:iam::{account}:role/{MEMBER_ACCOUNT_ROLE_NAME}',
                     RoleSessionName=f"AssumeRoleSession{uuid.uuid4()}"
                 )
                 credentials = assumed_role_object['Credentials']
@@ -250,7 +250,8 @@ def update_policies_and_get_error_report(sts_client, org_client, caller_account,
                                     "migrated. If you wish to update this policy again, please refer to the FAQ"
                 })
                 continue
-            if is_policy_changed(policy_document, affected_policies_group['ImpactedPolicyStatements']):
+            if is_policy_changed(policy_document, affected_policies_group['ImpactedPolicyStatements'],
+                                 default_action_mapping):
                 LOGGER.warning(f"Skipped updating policy. PolicyName = {policy_name}, PolicyType = {policy_type}, "
                                f"PolicyIdentifier = {policy_identifier}, Account = {account}, "
                                f"Reason = Impacted policy statements have changed")
@@ -315,12 +316,12 @@ def get_policy(iam_client, org_client, policy_type, policy_name, policy_identifi
         raise Exception(f"Failed to get policy. Reason: unknown policy type: {policy_type}")
 
 
-def is_policy_changed(current_policy_document, prior_impacted_statements):
+def is_policy_changed(current_policy_document, prior_impacted_statements, default_action_mapping):
     """
     Additional check enforced to see if an affected policy has changed from when the Identify script was last run.
     This is mostly to avoid time-of-check to time-of-use software bug.
     """
-    normalized_current_policy = normalize_policy(current_policy_document, DEFAULT_ACTION_MAPPING)
+    normalized_current_policy = normalize_policy(current_policy_document, default_action_mapping)
     current_policy_hash = generate_policy_hash(normalized_current_policy)
     prior_policy_hash = generate_policy_hash({'Statement': prior_impacted_statements})
     return current_policy_hash != prior_policy_hash
@@ -431,6 +432,7 @@ def main():
 
     sts_client = boto3.client('sts')
     org_client = boto3.client('organizations')
+    LOGGER.info("Running with boto client region = %s", sts_client.meta.region_name)
     caller_account = sts_client.get_caller_identity()['Account']
     LOGGER.info("Caller account: %s", caller_account)
 
@@ -445,7 +447,9 @@ def main():
 
     org_accounts = OrgHelper.get_all_org_accounts(org_client)
 
-    validate(affected_policies_data, org_accounts)
+    default_action_mapping = get_default_old_to_new_action_map(sts_client.meta.partition)
+
+    validate(affected_policies_data, org_accounts, default_action_mapping)
 
     error_report = []
 
@@ -454,7 +458,7 @@ def main():
     with ThreadPoolExecutor(max_workers=num_of_workers) as executor:
         futures = [
             executor.submit(update_policies_and_get_error_report, sts_client, org_client, caller_account,
-                            affected_policy_group)
+                            affected_policy_group, default_action_mapping)
             for affected_policy_group in affected_policies_data]
         for future in as_completed(futures):
             error_report.extend(future.result())

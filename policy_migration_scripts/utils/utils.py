@@ -12,13 +12,14 @@ from policy_migration_scripts.utils.model import ValidationException
 LOGGER = get_logger(__name__)
 
 
-def get_default_old_to_new_action_map():
+def get_default_old_to_new_action_map(partition):
     """
-    Read the action mapping config file and return as dictionary.
-    Config file is named 'action_mapping_config.json' and should be present under `config` directory of the package
+    Read the action mapping config file for the given partition and return as dictionary.
+    Config file is named 'action_mapping_config.json' and should be present under `config/<partition>` directory of the
+    package
     """
     try:
-        file_path = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'config',
+        file_path = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'config', partition,
                                  'action_mapping_config.json')
         LOGGER.info(f"Loading default old to new action mapping file from {file_path}")
         with open(file_path, 'r') as fp:
@@ -88,3 +89,10 @@ def read_accounts_from_file(file_path):
     except Exception as err:
         LOGGER.error(f"Failed when reading accounts from file: {file_path}")
         raise err
+
+
+def is_china_region(boto_client):
+    """
+    Return a boolean value indicating whether the region is China or not.
+    """
+    return boto_client.meta.partition == 'aws-cn'

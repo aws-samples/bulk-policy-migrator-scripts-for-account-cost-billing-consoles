@@ -10,7 +10,7 @@
             {
               "Effect": "Allow",
               "Principal": {
-                "AWS": "arn:aws:iam::<management_account>:root"
+                "AWS": {"Fn::Sub": "arn:${AWS::Partition}:iam::<management_account>:root"}
               },
               "Action": "sts:AssumeRole"
             }

@@ -17,8 +17,9 @@ class IamHelper:
             iam_client = boto3.client('iam')
         else:
             sts_client = boto3.client('sts')
+            partition = sts_client.meta.partition
             assumed_role_object = sts_client.assume_role(
-                RoleArn=f'arn:aws:iam::{account_id_}:role/{assume_role}',
+                RoleArn=f'arn:{partition}:iam::{account_id_}:role/{assume_role}',
                 RoleSessionName=f'AssumeRoleSession{uuid.uuid4()}'
             )
             credentials = assumed_role_object['Credentials']
