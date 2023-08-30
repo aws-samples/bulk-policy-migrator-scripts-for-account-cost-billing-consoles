@@ -82,7 +82,16 @@ before running the scripts.
     cd policy_migration_scripts/scripts
     ```
 
-7. Configure the credentials using AWS CLI. You can read more about how to do this [here](https://boto3.amazonaws.com/v1/documentation/api/latest/guide/credentials.html)
+7. Configure the credentials using AWS CLI. You can read more about how to do this [here](https://boto3.amazonaws.com/v1/documentation/api/latest/guide/credentials.html#interactive-configuration).
+   Credentials can be configured in multiple ways. Regardless of the method that you choose, you must have both **AWS credentials**
+   and an **AWS Region** set before running the scripts. The simplest way is to do this in an interactive manner using AWS CLI
+   and running `aws configure` command to set up your credentials and default region. Follow the prompts, and it will generate
+   configuration files in the correct locations for you.
+
+**Note:**
+Specifying incorrect region can cause errors during script execution. For e.g. when running the script in China regions,
+if the region is set to *us-east-1* you will see errors like - `The security token included in the request is invalid`.
+For China regions, the region value should be either *cn-north-1* or *cn-northwest-1*.
 
 ## Step 2: Create the CloudFormation stack set
 
