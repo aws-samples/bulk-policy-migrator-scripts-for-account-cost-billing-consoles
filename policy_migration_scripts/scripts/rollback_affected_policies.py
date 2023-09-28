@@ -14,10 +14,20 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(
 sys.path.append(project_root)
 
 from policy_migration_scripts.utils.iam import IamHelper
+from policy_migration_scripts.utils.identity_center import IdentityCenterHelper
 from policy_migration_scripts.utils.log import get_logger
-from policy_migration_scripts.utils.model import PolicyType
+from policy_migration_scripts.utils.model import (
+    PermissionSetProvisionRequest,
+    PolicyType,
+    RollbackPoliciesExecutionResult,
+    SummaryReport,
+)
 from policy_migration_scripts.utils.org import OrgHelper
-from policy_migration_scripts.utils.utils import is_china_region, read_accounts_from_file
+from policy_migration_scripts.utils.utils import (
+    is_china_region,
+    is_sso_role,
+    read_accounts_from_file,
+)
 from policy_migration_scripts.utils.validation import (
     rollback_args_deep_validate,
     rollback_args_fast_validate,
@@ -26,16 +36,13 @@ from policy_migration_scripts.utils.validation import (
 
 LOGGER = get_logger(__name__)
 
-# keyword used in summary report
-SUCCESS = "Success Cases"
-FAILURE = "Failure Cases"
-
 
 def main():
     args = parse_args()
     rollback_args_fast_validate(args)
     sts_client = boto3.client('sts')
     org_client = boto3.client('organizations')
+    sso_admin_client = boto3.client('sso-admin')
     LOGGER.info("Running with boto client region = %s", sts_client.meta.region_name)
     payer_account = sts_client.get_caller_identity()['Account']
     is_china = is_china_region(sts_client)
@@ -44,10 +51,10 @@ def main():
     all_member_accounts = OrgHelper.get_all_org_accounts(org_client)
     rollback_args_deep_validate(args, payer_account, all_member_accounts)
     member_accounts = get_accounts_in_rollback_scope(all_member_accounts, args, payer_account)
-    main_summary_report = init_summary_report()
+    main_summary_report = SummaryReport()
     try:
         for member_account in member_accounts:
-            do_rollback(member_account, payer_account, org_client, main_summary_report, is_china)
+            do_rollback(member_account, payer_account, org_client, sso_admin_client, main_summary_report, is_china)
         write_summary_report(main_summary_report)
     except Exception as e:
         LOGGER.error("The rolling back process was interrupted by an expected error. "
@@ -55,38 +62,53 @@ def main():
         raise e
 
 
-def do_rollback(member_account, payer_account, org_client, main_summary_report, is_china):
+def do_rollback(member_account, payer_account, org_client, sso_admin_client, main_summary_report, is_china):
+    LOGGER.info(f'Running for account: {member_account}')
+
     iam_client_for_member_account = IamHelper.get_iam_client(member_account, payer_account)
+    permission_set_provision_requests = None
     if member_account == payer_account and not is_china:
-        summary_report = rollback_scp_policies(org_client, member_account)
-        merge_report(main_summary_report, summary_report)
-    merge_report(main_summary_report,
-                 rollback_customer_managed_policies(iam_client_for_member_account, member_account))
-    merge_report(main_summary_report,
-                 rollback_user_inline_policies(iam_client_for_member_account, member_account))
-    merge_report(main_summary_report,
-                 rollback_role_inline_policies(iam_client_for_member_account, member_account))
-    merge_report(main_summary_report,
-                 rollback_group_inline_policies(iam_client_for_member_account, member_account))
+        execution_result = rollback_permission_sets(sso_admin_client, member_account)
+        merge_summary_report(main_summary_report, execution_result.summary_report)
+        permission_set_provision_requests = execution_result.permission_set_provision_requests
+
+        execution_result = rollback_scp_policies(org_client, member_account)
+        merge_summary_report(main_summary_report, execution_result.summary_report)
+
+    execution_result = rollback_customer_managed_policies(iam_client_for_member_account, member_account)
+    merge_summary_report(main_summary_report, execution_result.summary_report)
+
+    execution_result = rollback_user_inline_policies(iam_client_for_member_account, member_account)
+    merge_summary_report(main_summary_report, execution_result.summary_report)
+
+    execution_result = rollback_role_inline_policies(iam_client_for_member_account, member_account)
+    merge_summary_report(main_summary_report, execution_result.summary_report)
+
+    execution_result = rollback_group_inline_policies(iam_client_for_member_account, member_account)
+    merge_summary_report(main_summary_report, execution_result.summary_report)
+
+    if permission_set_provision_requests:
+        permission_set_provisioning_report = IdentityCenterHelper.get_permission_set_provisioning_status_report(
+            sso_admin_client,
+            permission_set_provision_requests
+        )
+        merge_summary_report(main_summary_report, permission_set_provisioning_report)
 
 
-def merge_report(main_summary_report, summary_report):
-    main_summary_report[FAILURE] += summary_report[FAILURE]
-    main_summary_report[SUCCESS] += summary_report[SUCCESS]
+def merge_summary_report(main_summary_report: SummaryReport, summary_report: SummaryReport):
+    main_summary_report.failure_report += summary_report.failure_report
+    main_summary_report.success_report += summary_report.success_report
 
 
-def init_summary_report():
-    return dict({
-        FAILURE: [],
-        SUCCESS: [],
-    })
-
-
-def write_summary_report(summary_report):
+def write_summary_report(summary_report: SummaryReport):
+    json_report = {
+        "Failure Cases": summary_report.failure_report,
+        "Success Cases": summary_report.success_report,
+    }
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H-%M-%S-%f")
     filename = f'RollBack-Report-{timestamp}.json'
     with open(filename, 'w') as fp:
-        json.dump(summary_report, fp, indent=4)
+        json.dump(json_report, fp, indent=4)
     LOGGER.info("Successfully rolled back all policies")
     LOGGER.info(f"Rollback summary report written to file {filename}.")
 
@@ -170,7 +192,8 @@ def filter_member_accounts(excluded_accounts, all_accounts):
 
 
 def rollback_customer_managed_policies(iam_client_, account_id):
-    summary_report = init_summary_report()
+    LOGGER.info("Scanning for Customer Managed Policies")
+    execution_result = RollbackPoliciesExecutionResult()
     for policies in IamHelper.get_customer_managed_policies(iam_client_):
         for policy in policies:
             policy_document, should_update = clean_up_suggested_customer_managed_statements_if_found_any(policy)
@@ -189,7 +212,7 @@ def rollback_customer_managed_policies(iam_client_, account_id):
                         delete_oldest_version_in_customer_managed_policy(iam_client_, policy_arn, oldest_version_id)
                     update_customer_managed_policy_with_cleaned_document(iam_client_, policy, policy_document)
                     report["Status"] = "SUCCESS"
-                    summary_report[SUCCESS].append(report)
+                    execution_result.summary_report.success_report.append(report)
                     LOGGER.info(
                         f"Successfully rolled back policy. PolicyName = {policy['PolicyName']}, "
                         f"PolicyType = Customer_Managed_Policy, PolicyId = {policy['PolicyId']}, "
@@ -201,8 +224,8 @@ def rollback_customer_managed_policies(iam_client_, account_id):
                         f"Failed rolling back policy. PolicyName = {policy['PolicyName']}, "
                         f"PolicyType = Customer_Managed_Policy, PolicyId = {policy['PolicyId']}, "
                         f"Account = {account_id}, Error = {e}")
-                    summary_report[FAILURE].append(report)
-    return summary_report
+                    execution_result.summary_report.failure_report.append(report)
+    return execution_result
 
 
 def check_if_reached_versions_limit(policy, max_limit=5):
@@ -220,7 +243,8 @@ def delete_oldest_version_in_customer_managed_policy(iam_client_, policy_arn, ol
 
 
 def rollback_user_inline_policies(iam_client_, account_id):
-    summary_report = init_summary_report()
+    LOGGER.info("Scanning for User Inline Policies")
+    execution_result = RollbackPoliciesExecutionResult()
     for users in IamHelper.get_users(iam_client_):
         for user in users:
             if 'UserPolicyList' in user:
@@ -243,7 +267,7 @@ def rollback_user_inline_policies(iam_client_, account_id):
                                                                        user_name,
                                                                        policy_document)
                             report["Status"] = "SUCCESS"
-                            summary_report[SUCCESS].append(report)
+                            execution_result.summary_report.success_report.append(report)
                             LOGGER.info(
                                 f"Successfully rolled back policy. PolicyName = {user_policy['PolicyName']}, "
                                 f"UserName = {user_name}, UserId = {user['UserId']}, Account = {account_id}.")
@@ -254,12 +278,13 @@ def rollback_user_inline_policies(iam_client_, account_id):
                                 f"Failed rolling back policy. PolicyName = {user_policy['PolicyName']}, "
                                 f"UserName = {user_name}, UserId = {user['UserId']}, Account = {account_id}, "
                                 f"Error = {e}")
-                            summary_report[FAILURE].append(report)
-    return summary_report
+                            execution_result.summary_report.failure_report.append(report)
+    return execution_result
 
 
 def rollback_scp_policies(org_client_, account_id):
-    summary_report = init_summary_report()
+    LOGGER.info("Scanning for SCPs")
+    execution_result = RollbackPoliciesExecutionResult()
     for policies in OrgHelper.get_all_scps(org_client_):
         for policy in policies:
             policy_id = policy['Id']
@@ -277,23 +302,65 @@ def rollback_scp_policies(org_client_, account_id):
                 try:
                     OrgHelper.update_scp(org_client_, policy_id, updated_policy_document)
                     report["Status"] = "SUCCESS"
-                    summary_report[SUCCESS].append(report)
+                    execution_result.summary_report.success_report.append(report)
                     LOGGER.info(
                         f"Successfully rolled back policy. PolicyName = {policy['Name']}, "
                         f"PolicyType = Service_Control_Policy, PolicyId = {policy_id}, Account = {account_id}.")
                 except Exception as e:
                     report["Status"] = "FAILURE"
                     report["ErrorMessage"] = f"{type(e).__name__}: {e}"
-                    summary_report[FAILURE].append(report)
+                    execution_result.summary_report.failure_report.append(report)
                     LOGGER.error(
                         f"Failed rolling back policy. PolicyName = {policy['Name']}, "
                         f"PolicyType = Service_Control_Policy, PolicyId = {policy_id}, Account = {account_id}, "
                         f"Error = {e}")
-    return summary_report
+    return execution_result
+
+
+def rollback_permission_sets(sso_admin_client, account_id) -> RollbackPoliciesExecutionResult:
+    LOGGER.info("Scanning for Permission Sets")
+    execution_result = RollbackPoliciesExecutionResult()
+    instance_arns = IdentityCenterHelper.get_all_instance_arns(sso_admin_client)
+    for instance_arn in instance_arns:
+        permission_set_arns = IdentityCenterHelper.get_all_permission_set_arns(sso_admin_client, instance_arn)
+        for permission_set_arn in permission_set_arns:
+            policy_document = IdentityCenterHelper.get_inline_policy_for_permission_set(sso_admin_client, instance_arn,
+                                                                                        permission_set_arn)
+            updated_policy_document, should_update = \
+                clean_up_suggested_inline_statements(policy_document)
+            if should_update:
+                policy_name = IdentityCenterHelper.get_permission_set_name(sso_admin_client, instance_arn,
+                                                                           permission_set_arn)
+                try:
+                    IdentityCenterHelper.update_inline_policy_for_permission_set(sso_admin_client, instance_arn,
+                                                                                 permission_set_arn,
+                                                                                 updated_policy_document)
+                    request_id = IdentityCenterHelper.provision_permission_set_and_get_request_id(sso_admin_client,
+                                                                                                  instance_arn,
+                                                                                                  permission_set_arn)
+                    execution_result.permission_set_provision_requests.append(
+                        PermissionSetProvisionRequest(account_id, instance_arn, policy_name, request_id))
+                    LOGGER.info(f"Successfully triggered permission set rollback. PermissionSetName = {policy_name}, "
+                                f"InstanceArn = {instance_arn}, Account = {account_id}")
+                except Exception as e:
+                    LOGGER.error(
+                        f"Failed rolling back permission set. PermissionSetName = {policy_name}, "
+                        f"InstanceArn = {instance_arn}, Account = {account_id}, Error = {e}")
+                    execution_result.summary_report.failure_report.append({
+                        "Account": account_id,
+                        "PolicyName": policy_name,
+                        "Type": PolicyType.PermissionSet.value,
+                        "IAMIdentityCenterInstanceArn": instance_arn,
+                        "Status": "FAILURE",
+                        "ErrorMessage": f"{type(e).__name__}: {e}"
+                    })
+
+    return execution_result
 
 
 def rollback_group_inline_policies(iam_client_, account_id):
-    summary_report = init_summary_report()
+    LOGGER.info("Scanning for Group Inline Policies")
+    execution_result = RollbackPoliciesExecutionResult()
     for groups in IamHelper.get_groups(iam_client_):
         for group in groups:
             if 'GroupPolicyList' in group:
@@ -316,7 +383,7 @@ def rollback_group_inline_policies(iam_client_, account_id):
                                                            group_name,
                                                            updated_policy_document)
                             report["Status"] = "SUCCESS"
-                            summary_report[SUCCESS].append(report)
+                            execution_result.summary_report.success_report.append(report)
                             LOGGER.info(
                                 f"Successfully rolled back policy. PolicyName = {group_policy['PolicyName']}, "
                                 f"GroupName = {group_name}, GroupId = {group['GroupId']}, Account = {account_id}.")
@@ -327,15 +394,16 @@ def rollback_group_inline_policies(iam_client_, account_id):
                                 f"Failed rolling back policy. PolicyName = {group_policy['PolicyName']}, "
                                 f"GroupName = {group_name}, GroupId = {group['GroupId']}, Account = {account_id}, "
                                 f"Error = {e}")
-                            summary_report[FAILURE].append(report)
-    return summary_report
+                            execution_result.summary_report.failure_report.append(report)
+    return execution_result
 
 
 def rollback_role_inline_policies(iam_client_, account_id):
-    summary_report = init_summary_report()
+    LOGGER.info("Scanning for Role Inline Policies")
+    execution_result = RollbackPoliciesExecutionResult()
     for roles in IamHelper.get_roles(iam_client_):
         for role in roles:
-            if 'RolePolicyList' in role:
+            if not is_sso_role(role['RoleName']) and 'RolePolicyList' in role:
                 role_name = role['RoleName']
                 for role_policy in role['RolePolicyList']:
                     updated_policy_document, should_update = \
@@ -355,7 +423,7 @@ def rollback_role_inline_policies(iam_client_, account_id):
                                                            role_name,
                                                            updated_policy_document)
                             report["Status"] = "SUCCESS"
-                            summary_report[SUCCESS].append(report)
+                            execution_result.summary_report.success_report.append(report)
                             LOGGER.info(
                                 f"Successfully rolled back policy. PolicyName = {role_policy['PolicyName']}, "
                                 f"RoleName = {role_name}, RoleId = {role['RoleId']}, Account = {account_id}.")
@@ -366,8 +434,8 @@ def rollback_role_inline_policies(iam_client_, account_id):
                                 f"Failed rolling back policy. PolicyName = {role_policy['PolicyName']}, "
                                 f"RoleName = {role_name}, RoleId = {role['RoleId']}, Account = {account_id}, "
                                 f"Error = {e}")
-                            summary_report[FAILURE].append(report)
-    return summary_report
+                            execution_result.summary_report.failure_report.append(report)
+    return execution_result
 
 
 def is_suggested_policy_statement(statement):

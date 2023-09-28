@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT-0
 
 from enum import Enum
+from typing import List
 
 
 class PolicyType(Enum):
@@ -10,6 +11,7 @@ class PolicyType(Enum):
     GroupInlinePolicy = 'GroupInlinePolicy'
     RoleInlinePolicy = 'RoleInlinePolicy'
     SCP = 'SCP'
+    PermissionSet = 'PermissionSet'
 
     @classmethod
     def list(cls):
@@ -55,3 +57,42 @@ class Maps:
         if self.policy_hash_to_suggested_replacements != other.policy_hash_to_suggested_replacements:
             return False
         return True
+
+    def is_empty(self):
+        return len(self.policy_id_to_original) == len(self.policy_id_to_impacted_statements) == len(
+            self.policy_id_to_metadata) == len(self.policy_id_to_hash) == len(self.policy_hash_to_policy_ids) == len(
+            self.policy_hash_to_suggested_replacements) == 0
+
+
+class PermissionSetProvisionRequest:
+    def __init__(self, account, instance_arn, permission_set_name, request_id):
+        self.account = account
+        self.instance_arn = instance_arn
+        self.permission_set_name = permission_set_name
+        self.request_id = request_id
+
+
+class UpdatePoliciesExecutionResult:
+    def __init__(self):
+        self.error_report = []
+        self.permission_set_provision_requests: List[PermissionSetProvisionRequest] = []
+
+    def is_empty(self):
+        return len(self.error_report) == len(self.permission_set_provision_requests) == 0
+
+
+class SummaryReport:
+    """ Used in Update and Rollback scripts to capture the summary report that gets written to file as output """
+    def __init__(self):
+        self.failure_report = []
+        self.success_report = []
+
+
+class RollbackPoliciesExecutionResult:
+    def __init__(self):
+        self.summary_report: SummaryReport = SummaryReport()
+        self.permission_set_provision_requests: List[PermissionSetProvisionRequest] = []
+
+    def is_empty(self):
+        return len(self.summary_report.success_report) == len(self.summary_report.failure_report) == len(
+            self.permission_set_provision_requests) == 0

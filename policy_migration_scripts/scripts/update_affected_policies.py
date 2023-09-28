@@ -23,10 +23,17 @@ from policy_migration_scripts.utils.constants import (
 )
 from policy_migration_scripts.utils.hashing import generate_policy_hash, normalize_policy
 from policy_migration_scripts.utils.iam import IamHelper
+from policy_migration_scripts.utils.identity_center import IdentityCenterHelper
 from policy_migration_scripts.utils.log import get_logger
-from policy_migration_scripts.utils.model import PolicyType, ValidationException
+from policy_migration_scripts.utils.model import (
+    PermissionSetProvisionRequest,
+    PolicyType,
+    UpdatePoliciesExecutionResult,
+    ValidationException,
+)
 from policy_migration_scripts.utils.org import OrgHelper
 from policy_migration_scripts.utils.utils import (
+    extract_arn_tuple_from_sso_policy_identifier,
     get_default_old_to_new_action_map,
     is_impacted_action,
     is_policy_migrated,
@@ -198,17 +205,17 @@ def validate_input_directory(input_directory):
             f"Input directory {input_directory} is missing the file 'affected_policies_and_suggestions.json'")
 
 
-def update_policies_and_get_error_report(sts_client, org_client, caller_account, affected_policies_group,
-                                         default_action_mapping):
+def update_policies_and_get_execution_result(sts_client, org_client, sso_admin_client, caller_account,
+                                             affected_policies_group, default_action_mapping):
     """
     Update all policies in the input file with the corresponding suggestions and return all failures encountered
     during this process
     """
-    error_report = []  # type: ignore
+    execution_result = UpdatePoliciesExecutionResult()
 
     # Skip metadata
     if 'AccountsScanned' in affected_policies_group:
-        return error_report
+        return execution_result
 
     group_name = affected_policies_group['GroupName']
     LOGGER.info("Starting to update policies in Group %s", group_name)
@@ -234,12 +241,13 @@ def update_policies_and_get_error_report(sts_client, org_client, caller_account,
                     aws_secret_access_key=credentials['SecretAccessKey'],
                     aws_session_token=credentials['SessionToken'],
                 )
-            policy_document = get_policy(iam_client, org_client, policy_type, policy_name, policy_identifier)
+            policy_document = get_policy(iam_client, org_client, sso_admin_client, policy_type, policy_name,
+                                         policy_identifier)
             if is_policy_migrated(policy_document):
                 LOGGER.warning(f"Skipped updating policy. PolicyName = {policy_name}, PolicyType = {policy_type}, "
                                f"PolicyIdentifier = {policy_identifier}, Account = {account}, "
                                f"Reason = Policy already migrated")
-                error_report.append({
+                execution_result.error_report.append({
                     "GroupName": group_name,
                     "Account": account,
                     "PolicyType": policy_type,
@@ -255,7 +263,7 @@ def update_policies_and_get_error_report(sts_client, org_client, caller_account,
                 LOGGER.warning(f"Skipped updating policy. PolicyName = {policy_name}, PolicyType = {policy_type}, "
                                f"PolicyIdentifier = {policy_identifier}, Account = {account}, "
                                f"Reason = Impacted policy statements have changed")
-                error_report.append({
+                execution_result.error_report.append({
                     "GroupName": group_name,
                     "Account": account,
                     "PolicyType": policy_type,
@@ -268,7 +276,8 @@ def update_policies_and_get_error_report(sts_client, org_client, caller_account,
                 })
                 continue
             update_policy_document(policy_document, affected_policies_group['SuggestedPolicyStatementsToAppend'])
-            update_policy(iam_client, org_client, policy_type, policy_name, policy_identifier, policy_document)
+            update_policy(iam_client, org_client, sso_admin_client, policy_type, policy_name, policy_identifier,
+                          policy_document, execution_result, account)
             LOGGER.info(f"Successfully updated policy. PolicyName = {policy_name}, PolicyType = {policy_type}, "
                         f"PolicyIdentifier = {policy_identifier}, Account = {account}")
         except ClientError as err:
@@ -276,7 +285,7 @@ def update_policies_and_get_error_report(sts_client, org_client, caller_account,
                          f"PolicyIdentifier = {policy_identifier}, Account = {account}, "
                          f"Error = {err}")
             error_msg = f"{err.response['Error']['Code']}: {err.response['Error']['Message']}"
-            error_report.append({
+            execution_result.error_report.append({
                 "GroupName": group_name,
                 "Account": account,
                 "PolicyType": policy_type,
@@ -290,7 +299,7 @@ def update_policies_and_get_error_report(sts_client, org_client, caller_account,
                          f"PolicyIdentifier = {policy_identifier}, Account = {account}, "
                          f"Error = {err}")
             error_msg = f"{type(err).__name__}: {err}"
-            error_report.append({
+            execution_result.error_report.append({
                 "GroupName": group_name,
                 "Account": account,
                 "PolicyType": policy_type,
@@ -301,10 +310,10 @@ def update_policies_and_get_error_report(sts_client, org_client, caller_account,
             })
 
     LOGGER.info("Finished updating policies in Group %s", group_name)
-    return error_report
+    return execution_result
 
 
-def get_policy(iam_client, org_client, policy_type, policy_name, policy_identifier):
+def get_policy(iam_client, org_client, sso_admin_client, policy_type, policy_name, policy_identifier):
     """ Fetches the latest policy document for the input policy """
     if policy_type == PolicyType.CustomerManagedPolicy.value:
         return get_managed_policy(iam_client, policy_identifier)
@@ -312,6 +321,10 @@ def get_policy(iam_client, org_client, policy_type, policy_name, policy_identifi
         return get_inline_policy(iam_client, policy_type, policy_name, policy_identifier)
     elif policy_type == PolicyType.SCP.value:
         return OrgHelper.get_scp(org_client, policy_identifier)
+    elif policy_type == PolicyType.PermissionSet.value:
+        instance_arn, permission_set_arn = extract_arn_tuple_from_sso_policy_identifier(policy_identifier)
+        return IdentityCenterHelper.get_inline_policy_for_permission_set(sso_admin_client, instance_arn,
+                                                                         permission_set_arn)
     else:
         raise Exception(f"Failed to get policy. Reason: unknown policy type: {policy_type}")
 
@@ -336,7 +349,8 @@ def extract_actions_from_policy_statement(statement):
     return actions
 
 
-def update_policy(iam_client, org_client, policy_type, policy_name, policy_identifier, policy_document):
+def update_policy(iam_client, org_client, sso_admin_client, policy_type, policy_name, policy_identifier,
+                  policy_document, execution_result, account):
     """ Updates the policy with the new policy document """
     if policy_type == PolicyType.CustomerManagedPolicy.value:
         update_managed_policy(iam_client, policy_identifier, policy_document)
@@ -344,6 +358,14 @@ def update_policy(iam_client, org_client, policy_type, policy_name, policy_ident
         IamHelper.update_inline_policy(iam_client, policy_type, policy_name, policy_identifier, policy_document)
     elif policy_type == PolicyType.SCP.value:
         OrgHelper.update_scp(org_client, policy_identifier, policy_document)
+    elif policy_type == PolicyType.PermissionSet.value:
+        instance_arn, permission_set_arn = extract_arn_tuple_from_sso_policy_identifier(policy_identifier)
+        IdentityCenterHelper.update_inline_policy_for_permission_set(sso_admin_client, instance_arn, permission_set_arn,
+                                                                     policy_document)
+        request_id = IdentityCenterHelper.provision_permission_set_and_get_request_id(sso_admin_client, instance_arn,
+                                                                                      permission_set_arn)
+        permission_set_provision_request = PermissionSetProvisionRequest(account, instance_arn, policy_name, request_id)
+        execution_result.permission_set_provision_requests.append(permission_set_provision_request)
     else:
         raise Exception(f"Failed to update policy. Reason: Unknown policy type: {policy_type}")
 
@@ -432,6 +454,7 @@ def main():
 
     sts_client = boto3.client('sts')
     org_client = boto3.client('organizations')
+    sso_admin_client = boto3.client('sso-admin')
     LOGGER.info("Running with boto client region = %s", sts_client.meta.region_name)
     caller_account = sts_client.get_caller_identity()['Account']
     LOGGER.info("Caller account: %s", caller_account)
@@ -451,20 +474,30 @@ def main():
 
     validate(affected_policies_data, org_accounts, default_action_mapping)
 
-    error_report = []
+    aggregate_execution_result = UpdatePoliciesExecutionResult()
 
     num_of_workers = min(len(affected_policies_data), MAX_WORKERS_FOR_UPDATE_SCRIPT)
     LOGGER.info("Number of worker threads used: %s", num_of_workers)
     with ThreadPoolExecutor(max_workers=num_of_workers) as executor:
         futures = [
-            executor.submit(update_policies_and_get_error_report, sts_client, org_client, caller_account,
-                            affected_policy_group, default_action_mapping)
+            executor.submit(update_policies_and_get_execution_result, sts_client, org_client, sso_admin_client,
+                            caller_account, affected_policy_group, default_action_mapping)
             for affected_policy_group in affected_policies_data]
         for future in as_completed(futures):
-            error_report.extend(future.result())
+            individual_execution_result = future.result()
+            aggregate_execution_result.error_report.extend(individual_execution_result.error_report)
+            aggregate_execution_result.permission_set_provision_requests.extend(
+                individual_execution_result.permission_set_provision_requests)
 
-    if error_report:
-        write_error_report(error_report)
+    # Poll for permission set provisioning status
+    report = IdentityCenterHelper.get_permission_set_provisioning_status_report(
+        sso_admin_client,
+        aggregate_execution_result.permission_set_provision_requests
+    )
+    aggregate_execution_result.error_report.extend(report.failure_report)
+
+    if aggregate_execution_result.error_report:
+        write_error_report(aggregate_execution_result.error_report)
     else:
         LOGGER.info("Successfully updated all policies")
 
