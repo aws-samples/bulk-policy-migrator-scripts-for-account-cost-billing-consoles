@@ -96,3 +96,19 @@ def is_china_region(boto_client):
     Return a boolean value indicating whether the region is China or not.
     """
     return boto_client.meta.partition == 'aws-cn'
+
+
+def is_sso_role(role_name):
+    """
+    Return a boolean value indicating whether the IAM role is an SSO role or not.
+    SSO role always begin with `AWSReservedSSO`. It is a protected role modifiable only by AWS.
+    """
+    return role_name.startswith('AWSReservedSSO')
+
+
+def extract_arn_tuple_from_sso_policy_identifier(policy_identifier):
+    """
+    Identifier has the format `{instance_arn}${permission_set_arn}`. This is the format that Identify script generates.
+    Extract the InstanceArn and PermissionSetArn and return it as a tuple.
+    """
+    return policy_identifier.split('$')

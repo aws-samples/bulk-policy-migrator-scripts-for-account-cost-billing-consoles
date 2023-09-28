@@ -8,6 +8,7 @@ in your organization that use the old IAM actions:
 * Customer managed IAM policies
 * Role, group, and user IAM inline policies
 * Service control policies (SCPs) (for the payer account only)
+* Permission Sets (AWS SSO) (for the payer account only)
 
 The scripts generate suggestions for new actions that correspond to the old actions used in the policy. You then
 review the suggestions and use the scripts to add the new actions across all affected polices in your organization.
@@ -45,7 +46,16 @@ These scripts provide the following benefits:
 "organizations:DescribePolicy",
 "organizations:UpdatePolicy",
 "organizations:DescribeOrganization",
-"sts:AssumeRole"
+"sts:AssumeRole",
+"sso:ListInstances",
+"sso:ListPermissionSets",
+"sso:GetInlinePolicyForPermissionSet",
+"sso:DescribePermissionSet",
+"sso:PutInlinePolicyToPermissionSet",
+"sso:ProvisionPermissionSet",
+"sso:DescribePermissionSetProvisioningStatus",
+"iam:GetRole",
+"iam:ListAttachedRolePolicies"
 ```
 These are the permissions needed to execute the script. You will be using this IAM principal to configure aws credentials
 before running the scripts.

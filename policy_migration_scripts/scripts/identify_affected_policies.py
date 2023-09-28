@@ -19,6 +19,7 @@ sys.path.append(project_root)
 from policy_migration_scripts.utils.constants import MAX_WORKERS_FOR_IDENTIFY_SCRIPT
 from policy_migration_scripts.utils.hashing import generate_policy_hash, normalize_policy
 from policy_migration_scripts.utils.iam import IamHelper
+from policy_migration_scripts.utils.identity_center import IdentityCenterHelper
 from policy_migration_scripts.utils.log import get_logger
 from policy_migration_scripts.utils.model import Maps, PolicyType, ValidationException
 from policy_migration_scripts.utils.org import OrgHelper
@@ -26,6 +27,7 @@ from policy_migration_scripts.utils.utils import (
     get_default_old_to_new_action_map,
     is_china_region,
     is_policy_migrated,
+    is_sso_role,
     read_accounts_from_file,
 )
 from policy_migration_scripts.utils.validation import (
@@ -63,6 +65,7 @@ def identify_affected_policies_and_generate_maps_for_account(caller_account, acc
     identify_affected_role_inline_policies(maps, caller_account, account, action_mapping)
     if account == caller_account and not is_china:
         identify_affected_scps(maps, account, action_mapping)
+        identify_affected_permission_sets(maps, account, action_mapping)
 
     LOGGER.info("Finished processing account: %s", account)
     return maps
@@ -201,7 +204,7 @@ def identify_affected_role_inline_policies(maps, caller_account, account, action
     for roles in IamHelper.get_roles(iam_client):
         LOGGER.info(f'Scanning {len(roles)} roles')
         for role in roles:
-            if 'RolePolicyList' in role:
+            if not is_sso_role(role['RoleName']) and 'RolePolicyList' in role:
                 for policy in role['RolePolicyList']:
                     policy_document = policy['PolicyDocument']
                     if not is_policy_migrated(policy_document):
@@ -260,6 +263,45 @@ def identify_affected_scps(maps, account, action_mapping):
                         policy_id,
                         response['Policy']['PolicySummary']['Name'],
                         PolicyType.SCP.value,
+                        policy_document,
+                        impacted_statements
+                    )
+
+
+def identify_affected_permission_sets(maps, account, action_mapping):
+    LOGGER.info('Scanning for Permission Sets')
+    sso_admin_client = boto3.client('sso-admin')
+    instance_arns = IdentityCenterHelper.get_all_instance_arns(sso_admin_client)
+    for instance_arn in instance_arns:
+        permission_set_arns = IdentityCenterHelper.get_all_permission_set_arns(sso_admin_client, instance_arn)
+        LOGGER.info(f'Scanning {len(permission_set_arns)} permission sets for instance: {instance_arn}')
+        for permission_set_arn in permission_set_arns:
+            policy_document = IdentityCenterHelper.get_inline_policy_for_permission_set(sso_admin_client, instance_arn,
+                                                                                        permission_set_arn)
+            if not is_policy_migrated(policy_document):
+                impacted_statements = []
+                policy_document_copy = policy_document.copy()
+                statements = (policy_document['Statement']
+                              if isinstance(policy_document['Statement'], list)
+                              else [policy_document['Statement']])
+
+                for statement in statements:
+                    deprecated_actions = get_policy_deprecated_actions(action_mapping, statement)
+                    if deprecated_actions:
+                        impacted_statements.append(statement)
+
+                if impacted_statements:
+                    policy_id = f"{instance_arn}${permission_set_arn}"
+                    policy_name = IdentityCenterHelper.get_permission_set_name(sso_admin_client, instance_arn,
+                                                                               permission_set_arn)
+                    maps.policy_id_to_original[policy_id] = policy_document_copy
+                    process_affected_policy(
+                        maps,
+                        action_mapping,
+                        account,
+                        policy_id,
+                        policy_name,
+                        PolicyType.PermissionSet.value,
                         policy_document,
                         impacted_statements
                     )
@@ -362,15 +404,15 @@ def generate_replacement_actions_from_actions(action_mapping, actions: list):
 
 
 def get_policy_id(policy_id, policy_type):
-    '''
+    """
     Return user/group/role name for inline policies.
     policy_id is set to <UserOrGroupOrRole>$<PolicyName> during script execution
     to ensure the value is unique for hashing.
-    '''
+    """
     if (
-        policy_type == PolicyType.UserInlinePolicy.value
-        or policy_type == PolicyType.GroupInlinePolicy.value
-        or policy_type == PolicyType.RoleInlinePolicy.value
+            policy_type == PolicyType.UserInlinePolicy.value
+            or policy_type == PolicyType.GroupInlinePolicy.value
+            or policy_type == PolicyType.RoleInlinePolicy.value
     ):
         return policy_id.split('$')[0]
     return policy_id
