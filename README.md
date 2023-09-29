@@ -72,27 +72,35 @@ before running the scripts.
     cd bulk-policy-migrator-scripts-for-account-cost-billing-consoles
     ```
 
-3. Setup virtualenv
+3. [**ONLY applicable to Debian/Ubuntu systems**] Install python3-venv
+
+   This command should only be run if you are using Debian/Ubuntu systems. For all other systems, skip this and
+   move to 4.
+   ```
+   sudo apt install -y python3-venv
+   ```
+
+4. Setup virtualenv
     ```
     python3 -m venv venv
     ```
 
-4. Activate virtualenv
+5. Activate virtualenv
     ```
     source venv/bin/activate
     ```
 
-5. Install dependencies
+6. Install dependencies
     ```
     pip install -r requirements.txt
     ```
 
-6. Navigate to directory containing the scripts
+7. Navigate to directory containing the scripts
     ```
     cd policy_migration_scripts/scripts
     ```
 
-7. Configure the credentials using AWS CLI. You can read more about how to do this [here](https://boto3.amazonaws.com/v1/documentation/api/latest/guide/credentials.html#interactive-configuration).
+8. Configure the credentials using AWS CLI. You can read more about how to do this [here](https://boto3.amazonaws.com/v1/documentation/api/latest/guide/credentials.html#interactive-configuration).
    Credentials can be configured in multiple ways. Regardless of the method that you choose, you must have both **AWS credentials**
    and an **AWS Region** set before running the scripts. The simplest way is to do this in an interactive manner using AWS CLI
    and running `aws configure` command to set up your credentials and default region. Follow the prompts, and it will generate
