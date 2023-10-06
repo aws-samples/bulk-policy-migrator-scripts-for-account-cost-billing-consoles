@@ -61,8 +61,10 @@ class IdentityCenterHelper:
             InstanceArn=instance_arn,
             PermissionSetArn=permission_set_arn
         )
-        policy_document = json.loads(response['InlinePolicy'])
-        return policy_document
+        if 'InlinePolicy' in response and response['InlinePolicy']:
+            policy_document = json.loads(response['InlinePolicy'])
+            return policy_document
+        return None
 
     @staticmethod
     def get_permission_set_name(sso_admin_client, instance_arn, permission_set_arn):

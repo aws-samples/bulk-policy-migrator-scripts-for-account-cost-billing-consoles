@@ -278,7 +278,7 @@ def identify_affected_permission_sets(maps, account, action_mapping):
         for permission_set_arn in permission_set_arns:
             policy_document = IdentityCenterHelper.get_inline_policy_for_permission_set(sso_admin_client, instance_arn,
                                                                                         permission_set_arn)
-            if not is_policy_migrated(policy_document):
+            if policy_document and not is_policy_migrated(policy_document):
                 impacted_statements = []
                 policy_document_copy = policy_document.copy()
                 statements = (policy_document['Statement']

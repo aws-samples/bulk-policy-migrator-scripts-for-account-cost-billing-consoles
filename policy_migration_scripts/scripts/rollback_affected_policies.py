@@ -326,34 +326,35 @@ def rollback_permission_sets(sso_admin_client, account_id) -> RollbackPoliciesEx
         for permission_set_arn in permission_set_arns:
             policy_document = IdentityCenterHelper.get_inline_policy_for_permission_set(sso_admin_client, instance_arn,
                                                                                         permission_set_arn)
-            updated_policy_document, should_update = \
-                clean_up_suggested_inline_statements(policy_document)
-            if should_update:
-                policy_name = IdentityCenterHelper.get_permission_set_name(sso_admin_client, instance_arn,
-                                                                           permission_set_arn)
-                try:
-                    IdentityCenterHelper.update_inline_policy_for_permission_set(sso_admin_client, instance_arn,
-                                                                                 permission_set_arn,
-                                                                                 updated_policy_document)
-                    request_id = IdentityCenterHelper.provision_permission_set_and_get_request_id(sso_admin_client,
-                                                                                                  instance_arn,
-                                                                                                  permission_set_arn)
-                    execution_result.permission_set_provision_requests.append(
-                        PermissionSetProvisionRequest(account_id, instance_arn, policy_name, request_id))
-                    LOGGER.info(f"Successfully triggered permission set rollback. PermissionSetName = {policy_name}, "
-                                f"InstanceArn = {instance_arn}, Account = {account_id}")
-                except Exception as e:
-                    LOGGER.error(
-                        f"Failed rolling back permission set. PermissionSetName = {policy_name}, "
-                        f"InstanceArn = {instance_arn}, Account = {account_id}, Error = {e}")
-                    execution_result.summary_report.failure_report.append({
-                        "Account": account_id,
-                        "PolicyName": policy_name,
-                        "Type": PolicyType.PermissionSet.value,
-                        "IAMIdentityCenterInstanceArn": instance_arn,
-                        "Status": "FAILURE",
-                        "ErrorMessage": f"{type(e).__name__}: {e}"
-                    })
+            if policy_document:
+                updated_policy_document, should_update = \
+                    clean_up_suggested_inline_statements(policy_document)
+                if should_update:
+                    policy_name = IdentityCenterHelper.get_permission_set_name(sso_admin_client, instance_arn,
+                                                                               permission_set_arn)
+                    try:
+                        IdentityCenterHelper.update_inline_policy_for_permission_set(sso_admin_client, instance_arn,
+                                                                                     permission_set_arn,
+                                                                                     updated_policy_document)
+                        request_id = IdentityCenterHelper.provision_permission_set_and_get_request_id(sso_admin_client,
+                                                                                                      instance_arn,
+                                                                                                      permission_set_arn)
+                        execution_result.permission_set_provision_requests.append(
+                            PermissionSetProvisionRequest(account_id, instance_arn, policy_name, request_id))
+                        LOGGER.info(f"Successfully triggered permission set rollback. PermissionSetName = {policy_name}, "
+                                    f"InstanceArn = {instance_arn}, Account = {account_id}")
+                    except Exception as e:
+                        LOGGER.error(
+                            f"Failed rolling back permission set. PermissionSetName = {policy_name}, "
+                            f"InstanceArn = {instance_arn}, Account = {account_id}, Error = {e}")
+                        execution_result.summary_report.failure_report.append({
+                            "Account": account_id,
+                            "PolicyName": policy_name,
+                            "Type": PolicyType.PermissionSet.value,
+                            "IAMIdentityCenterInstanceArn": instance_arn,
+                            "Status": "FAILURE",
+                            "ErrorMessage": f"{type(e).__name__}: {e}"
+                        })
 
     return execution_result
 

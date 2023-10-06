@@ -32,14 +32,14 @@ def get_default_old_to_new_action_map(partition):
 
 def is_policy_migrated(policy_document):
     """
-    Check if the policy already has Sid with prefix `BillingConsolePolicyMigrator`. If so, we consider this policy
-    to be already migrated
+    Check if the policy already has Sid with prefix `BillingConsolePolicyMigrator` or `AffectedPoliciesMigrator`.
+    If so, we consider this policy to be already migrated.
     """
     statements = policy_document['Statement'] if isinstance(policy_document['Statement'], list) else [
         policy_document['Statement']]
     for statement in statements:
         sid = statement.get('Sid')
-        if sid and sid.startswith('BillingConsolePolicyMigrator'):
+        if sid and (sid.startswith('BillingConsolePolicyMigrator') or sid.startswith('AffectedPoliciesMigrator')):
             return True
     return False
 
